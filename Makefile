@@ -9,8 +9,8 @@
 # run them with: make run R=<id>  (e.g. make run R=fin-pulse)
 # List all available: make list-routines
 
-# Auto-detect: uv if available, fallback to python3
-PYTHON := $(shell command -v uv >/dev/null 2>&1 && echo "uv run python" || echo "python3")
+# Use .venv when available, then uv run python, then python3
+PYTHON := $(shell [ -f "$(CURDIR)/.venv/bin/python" ] && echo "$(CURDIR)/.venv/bin/python" || (command -v uv >/dev/null 2>&1 && echo "uv run python" || echo "python3"))
 ADW_DIR := ADWs/routines
 
 # Load .env if it exists
@@ -50,6 +50,12 @@ weekly:             ## 📊 Full weekly review (@clawdia)
 
 backup-daily:       ## 💾 Daily backup routine (scheduled, systematic)
 	$(PYTHON) $(ADW_DIR)/backup.py
+
+asaas-received:     ## 💸 Asaas received — confirmação de pagamentos recebidos (a cada 5min)
+	$(PYTHON) $(ADW_DIR)/asaas_received.py
+
+asaas:              ## 💳 Asaas daily — vencimentos hoje + inadimplência D+2/D+5 (08:00)
+	$(PYTHON) $(ADW_DIR)/asaas_payment_checker.py
 
 learn-weekly:       ## 📚 Learning loop weekly report — overdue facts + stats (Sundays 09:45 BRT)
 	$(PYTHON) $(ADW_DIR)/custom/learning_weekly.py
@@ -115,6 +121,19 @@ stop:               ## 🛑 Stop all EvoNexus services (dashboard + terminal-ser
 	@pkill -f "[d]ashboard/backend.*app.py" 2>/dev/null || true
 	@pkill -f "[a]pp.py" 2>/dev/null || true
 	@echo "✅ All services stopped"
+
+macos-install:      ## 🍎 Install LaunchAgent (auto-start on login) — macOS only
+	@chmod +x start-macos.sh
+	@launchctl load ~/Library/LaunchAgents/com.cognitiva.evonexus.plist 2>/dev/null || true
+	@echo "✅ LaunchAgent instalado. EvoNexus vai iniciar automaticamente no próximo login."
+	@echo "   Para iniciar agora: launchctl start com.cognitiva.evonexus"
+
+macos-uninstall:    ## 🍎 Uninstall LaunchAgent — macOS only
+	@launchctl unload ~/Library/LaunchAgents/com.cognitiva.evonexus.plist 2>/dev/null || true
+	@echo "✅ LaunchAgent removido. EvoNexus não vai mais iniciar automaticamente."
+
+macos-start:        ## 🍎 Start EvoNexus manually via startup script — macOS only
+	@bash start-macos.sh
 
 uninstall:          ## 🗑️  Full cleanup — stop services, remove nginx, data, deps (DESTRUCTIVE)
 	@echo ""
@@ -279,5 +298,5 @@ heartbeat-run:      ## ▶️  Run a heartbeat manually: make heartbeat-run ID=a
 help:               ## 📖 Show this help
 	@grep -E '^[a-zA-Z_-]+:.*##' Makefile | sort | awk 'BEGIN {FS = ":.*## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
 
-.PHONY: morning eod memory memory-lint weekly run list-routines daily scheduler dashboard-app terminal-logs terminal-stop telegram telegram-stop telegram-attach discord-channel discord-channel-stop discord-channel-attach imessage imessage-stop imessage-attach backup backup-s3 restore backup-list backup-daily logs logs-detail logs-tail metrics clean-logs docker-dashboard docker-telegram docker-down docker-logs docker-run docker-build help docs-build setup team-strategy team-dashboard team-weekly learn-weekly heartbeat-lint heartbeat-run
+.PHONY: morning eod memory memory-lint weekly asaas asaas-received run list-routines daily scheduler dashboard-app terminal-logs terminal-stop telegram telegram-stop telegram-attach discord-channel discord-channel-stop discord-channel-attach imessage imessage-stop imessage-attach backup backup-s3 restore backup-list backup-daily logs logs-detail logs-tail metrics clean-logs docker-dashboard docker-telegram docker-down docker-logs docker-run docker-build help docs-build setup team-strategy team-dashboard team-weekly learn-weekly heartbeat-lint heartbeat-run macos-install macos-uninstall macos-start
 .DEFAULT_GOAL := help

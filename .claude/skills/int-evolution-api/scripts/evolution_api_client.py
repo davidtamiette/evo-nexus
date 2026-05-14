@@ -34,10 +34,19 @@ def _load_dotenv():
 _load_dotenv()
 
 
-def get_config():
-    """Return (base_url, api_key) or exit with clear error."""
+def get_config(instance=None):
+    """Return (base_url, api_key) or exit with clear error.
+
+    Checks EVOLUTION_API_KEY_<INSTANCE> first (hyphens → underscores, uppercase),
+    then falls back to EVOLUTION_API_KEY.
+    """
     url = os.environ.get("EVOLUTION_API_URL")
-    key = os.environ.get("EVOLUTION_API_KEY")
+    key = None
+    if instance:
+        env_var = "EVOLUTION_API_KEY_" + instance.upper().replace("-", "_")
+        key = os.environ.get(env_var)
+    if not key:
+        key = os.environ.get("EVOLUTION_API_KEY")
     errors = []
     if not url:
         errors.append("EVOLUTION_API_URL is not set")
@@ -49,9 +58,15 @@ def get_config():
     return url.rstrip("/"), key
 
 
+def _instance_from_path(path):
+    """Extract instance name from paths like /category/action/instanceName."""
+    parts = path.strip("/").split("/")
+    return parts[2] if len(parts) >= 3 else None
+
+
 def api_request(method, path, body=None, params=None):
     """Make an HTTP request to the Evolution API. Returns parsed JSON."""
-    base_url, api_key = get_config()
+    base_url, api_key = get_config(instance=_instance_from_path(path))
     url = f"{base_url}/{path.lstrip('/')}"
 
     if params:

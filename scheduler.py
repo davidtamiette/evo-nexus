@@ -14,8 +14,22 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+# Load .env before anything else so routines have credentials available
+try:
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).parent / ".env")
+except ImportError:
+    pass
+
 WORKSPACE = Path(__file__).parent
-PYTHON = "uv run python" if os.system("command -v uv > /dev/null 2>&1") == 0 else "python3"
+_venv_python = WORKSPACE / ".venv" / "bin" / "python"
+_uv_bin = Path.home() / ".local" / "bin" / "uv"
+if _venv_python.exists():
+    PYTHON = str(_venv_python)
+elif _uv_bin.exists():
+    PYTHON = f"{_uv_bin} run python"
+else:
+    PYTHON = "python3"
 ROUTINES_DIR = WORKSPACE / "ADWs" / "routines"
 PID_FILE = WORKSPACE / "ADWs" / "logs" / "scheduler.pid"
 
@@ -105,6 +119,8 @@ def setup_schedule():
 
     # ── Core routines (shipped with repo) ──
     schedule.every().day.at("07:00").do(run_adw, "Good Morning", "good_morning.py")
+    schedule.every(5).minutes.do(run_adw, "Asaas Received", "asaas_received.py")
+    schedule.every().day.at("08:00").do(run_adw, "Asaas Daily", "asaas_payment_checker.py")
     schedule.every().day.at("21:00").do(run_adw, "End of Day", "end_of_day.py")
     schedule.every().day.at("21:15").do(run_adw, "Memory Sync", "memory_sync.py")
     # Disabled — replaced by Weekly Review (Team) in routines.yaml
@@ -268,6 +284,39 @@ def _load_custom_routines(schedule):
 _monthly_routines = []
 
 
+def _run_catchup(schedule_module):
+    """On startup, run daily fixed-time jobs missed in the last 4 hours."""
+    import threading
+
+    now = datetime.now()
+    WINDOW_H = 4
+    missed = []
+
+    for job in schedule_module.get_jobs():
+        if job.unit == "days" and job.interval == 1 and job.at_time is not None:
+            scheduled = datetime.combine(now.date(), job.at_time)
+            elapsed_h = (now - scheduled).total_seconds() / 3600
+            if 0 < elapsed_h <= WINDOW_H:
+                missed.append((scheduled, job))
+
+    if not missed:
+        return
+
+    missed.sort(key=lambda x: x[0])
+    ts = now.strftime("%H:%M")
+    try:
+        names = ", ".join(j.job_func.args[0] for _, j in missed)
+    except Exception:
+        names = f"{len(missed)} job(s)"
+    print(f"  {ts} [catch-up] {len(missed)} rotina(s) perdida(s) → {names}")
+
+    def _run():
+        for _, job in missed:
+            job.run()
+
+    threading.Thread(target=_run, daemon=True).start()
+
+
 def main():
     """Entry point — standalone scheduler."""
     import schedule
@@ -277,6 +326,7 @@ def main():
 
     print("EvoNexus Scheduler")
     setup_schedule()
+    _run_catchup(schedule)
     total = len(schedule.get_jobs())
     print(f"  {total} routines scheduled")
     print(f"  Press Ctrl+C to stop\n")

@@ -374,6 +374,7 @@ def step9_release_checkout(task_id: str | None, run_id: str, conn):
 # Map heartbeat_id → Python module (relative to heartbeat_runner.py's directory)
 _SYSTEM_HEARTBEAT_SCRIPTS: dict[str, str] = {
     "summary-watcher": "summary_watcher",
+    "asaas-payment-checker": "asaas_payment_checker",
 }
 
 

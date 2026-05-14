@@ -148,7 +148,7 @@ def register_websocket_proxy(sock) -> None:
         """
         if not current_user.is_authenticated:
             try:
-                client_ws.close(reason="auth required")
+                client_ws.sock.close()
             except Exception:
                 pass
             return
@@ -156,10 +156,13 @@ def register_websocket_proxy(sock) -> None:
         target = f"{TERMINAL_WS_BASE}/ws"
         try:
             upstream = create_connection(target, timeout=10)
+            # Remove the socket timeout after connection so idle recv() calls
+            # don't expire — the terminal-server is often silent between messages.
+            upstream.sock.settimeout(None)
         except Exception as exc:
             log.warning("terminal_proxy: upstream WS connect failed: %s", exc)
             try:
-                client_ws.close(reason=f"upstream unreachable: {exc}")
+                client_ws.sock.close()
             except Exception:
                 pass
             return
@@ -180,10 +183,6 @@ def register_websocket_proxy(sock) -> None:
                 pass
             finally:
                 stop.set()
-                try:
-                    client_ws.close()
-                except Exception:
-                    pass
 
         t = threading.Thread(target=_pump_upstream_to_client, daemon=True)
         t.start()
@@ -200,5 +199,11 @@ def register_websocket_proxy(sock) -> None:
             stop.set()
             try:
                 upstream.close()
+            except Exception:
+                pass
+            # Close the raw socket so Werkzeug cannot write HTTP response bytes
+            # to the already-WebSocket'd connection (would corrupt frames).
+            try:
+                client_ws.sock.close()
             except Exception:
                 pass
