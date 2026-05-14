@@ -71,6 +71,10 @@ _evo-output/
 .venv/
 __pycache__/
 *.pyc
+*.egg-info/
+
+# ── Runtime logs (macOS LaunchAgent) ─────
+logs/
 
 # ── OS ────────────────────────────────────
 .DS_Store
