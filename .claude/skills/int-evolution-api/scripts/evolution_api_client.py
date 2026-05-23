@@ -154,6 +154,13 @@ def cmd_set_presence(args):
     output(result)
 
 
+def cmd_send_chat_presence(args):
+    """Send typing/recording indicator to a specific chat (shows 'digitando...')."""
+    body = {"number": args.number, "presence": args.options, "delay": args.delay}
+    result = api_request("POST", f"/chat/sendPresence/{args.instance}", body=body)
+    output(result)
+
+
 def cmd_summary(args):
     instances = api_request("GET", "/instance/fetchInstances")
     if not isinstance(instances, list):
@@ -458,6 +465,12 @@ Examples:
     p.add_argument("name", help="Instance name")
     p.add_argument("--presence", required=True, choices=["available", "unavailable", "composing", "recording"])
 
+    p = sub.add_parser("send_chat_presence", help="Show 'digitando...' to a specific contact")
+    p.add_argument("instance", help="Instance name")
+    p.add_argument("number", help="Phone number (e.g. 5531982302185)")
+    p.add_argument("--options", default="composing", choices=["composing", "recording", "paused"])
+    p.add_argument("--delay", type=int, default=2000, help="Duration in ms (default: 2000)")
+
     sub.add_parser("summary", help="Overview of all instances with connection states")
 
     # --- Send Messages ---
@@ -604,6 +617,7 @@ def main():
         "logout": cmd_logout,
         "delete_instance": cmd_delete_instance,
         "set_presence": cmd_set_presence,
+        "send_chat_presence": cmd_send_chat_presence,
         "summary": cmd_summary,
         # Messages
         "send_text": cmd_send_text,

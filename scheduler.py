@@ -119,6 +119,7 @@ def setup_schedule():
 
     # ── Core routines (shipped with repo) ──
     schedule.every().day.at("07:00").do(run_adw, "Good Morning", "good_morning.py")
+    schedule.every().day.at("07:05").do(run_adw, "AI News Digest", "custom/ai_news_digest.py")
     schedule.every(5).minutes.do(run_adw, "Asaas Received", "asaas_received.py")
     schedule.every().day.at("08:00").do(run_adw, "Asaas Daily", "asaas_payment_checker.py")
     schedule.every().day.at("21:00").do(run_adw, "End of Day", "end_of_day.py")
@@ -171,7 +172,10 @@ def _load_routines_from_yaml(schedule, config_path: Path, is_plugin: bool = Fals
                 if make_id in _disabled:
                     print(f"  [{source_label}] skipped disabled routine '{name}' ({make_id})")
                     continue
-            if r.get("interval"):
+            if r.get("hourly"):
+                # Roda em cada hora cheia: 00:00, 01:00, 02:00 ...
+                schedule.every().hour.at(":00").do(run_adw, name, f"custom/{script}", args)
+            elif r.get("interval"):
                 schedule.every(int(r["interval"])).minutes.do(run_adw, name, f"custom/{script}", args)
             elif r.get("time"):
                 schedule.every().day.at(r["time"]).do(run_adw, name, f"custom/{script}", args)

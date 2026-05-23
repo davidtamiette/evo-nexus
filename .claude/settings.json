@@ -85,9 +85,12 @@
       "Bash(head *)",
       "Bash(tail *)",
       "Bash(cd *)",
+      "Bash(todoist today)",
       "Read(*)",
       "Write(*)",
-      "Edit(*)"
+      "Edit(*)",
+      "mcp__claude_ai_Google_Calendar__authenticate",
+      "mcp__claude_ai_Gmail__authenticate"
     ],
     "deny": [
       "Bash(rm -rf /)",
