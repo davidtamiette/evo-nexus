@@ -10,6 +10,7 @@ Env vars required:
 
 import argparse
 import json
+import mimetypes
 import os
 import sys
 import urllib.error
@@ -57,6 +58,46 @@ def _post_req(path: str, payload: dict, token_override: str = None) -> dict:
         body = json.loads(e.read())
         print(json.dumps({"error": body}))
         sys.exit(1)
+
+
+def _post_multipart(path: str, fields: dict, file_path: str, token_override: str = None) -> dict:
+    """Upload a local file via multipart/form-data."""
+    token = token_override or _get_token()
+    boundary = "----MetaPagesUpload"
+    body_parts = []
+    all_fields = {"access_token": token, **fields}
+    for key, val in all_fields.items():
+        body_parts.append(
+            f"--{boundary}\r\nContent-Disposition: form-data; name=\"{key}\"\r\n\r\n{val}".encode()
+        )
+    mime_type = mimetypes.guess_type(file_path)[0] or "image/jpeg"
+    filename = os.path.basename(file_path)
+    with open(file_path, "rb") as f:
+        file_data = f.read()
+    body_parts.append(
+        f"--{boundary}\r\nContent-Disposition: form-data; name=\"source\"; filename=\"{filename}\"\r\nContent-Type: {mime_type}\r\n\r\n".encode()
+        + file_data
+    )
+    body = b"\r\n".join(body_parts) + f"\r\n--{boundary}--\r\n".encode()
+    url = f"{BASE_URL}/{path}"
+    req = urllib.request.Request(
+        url, data=body, method="POST",
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"}
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r:
+            return json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        body_err = json.loads(e.read())
+        print(json.dumps({"error": body_err}))
+        sys.exit(1)
+
+
+def _post_instagram_local(ig_id: str, page_token: str, file_path: str, caption: str = "") -> dict:
+    """Upload local image to Instagram via two-step: create container (binary) → publish."""
+    # Instagram requires a public URL — upload to Facebook first to get one, then use it
+    # We'll use the page's photo upload to get a public URL, then pass to Instagram
+    return {"error": "Instagram direct binary upload not supported — use URL-based post"}
 
 
 def _delete_req(path: str, token_override: str = None) -> dict:
@@ -170,15 +211,93 @@ def cmd_schedule(args):
     })
 
 
+def _get_instagram_id(page_id: str, page_token: str) -> str | None:
+    """Return the Instagram Business Account ID linked to a Facebook Page, or None."""
+    try:
+        data = _get(page_id, {"fields": "instagram_business_account"}, token_override=page_token)
+        return data.get("instagram_business_account", {}).get("id")
+    except Exception:
+        return None
+
+
+def _publish_instagram_image(ig_id: str, page_token: str, image_url: str, caption: str = "") -> dict:
+    """Two-step Instagram Content Publishing API: create container → publish."""
+    container_payload = {"image_url": image_url}
+    if caption:
+        container_payload["caption"] = caption
+    container = _post_req(f"{ig_id}/media", container_payload, token_override=page_token)
+    creation_id = container.get("id")
+    if not creation_id:
+        return {"error": "Failed to create Instagram media container", "details": container}
+    result = _post_req(f"{ig_id}/media_publish", {"creation_id": creation_id}, token_override=page_token)
+    return {**result, "ig_user_id": ig_id, "status": "published"}
+
+
+def _get_photo_url(photo_id: str, page_token: str) -> str | None:
+    """Fetch the public URL of an uploaded Facebook photo."""
+    try:
+        data = _get(photo_id, {"fields": "images"}, token_override=page_token)
+        images = data.get("images", [])
+        if images:
+            return images[0].get("source")
+    except Exception:
+        pass
+    return None
+
+
 def cmd_post_image(args):
     page_id, page_token = _resolve_page(args.page)
-    payload = {"url": args.image_url}
-    if args.message:
-        payload["caption"] = args.message
-    if args.no_story:
-        payload["no_story"] = "true"
-    result = _post_req(f"{page_id}/photos", payload, token_override=page_token)
-    _out({**result, "page_id": page_id, "status": "published"})
+    is_local = args.image_url and not args.image_url.startswith("http")
+    public_url = args.image_url
+
+    if is_local:
+        fields = {}
+        if args.message:
+            fields["caption"] = args.message
+        if args.no_story:
+            fields["no_story"] = "true"
+        result = _post_multipart(f"{page_id}/photos", fields, args.image_url, token_override=page_token)
+        photo_id = result.get("id")
+        if photo_id:
+            public_url = _get_photo_url(photo_id, page_token)
+    else:
+        payload = {"url": args.image_url}
+        if args.message:
+            payload["caption"] = args.message
+        if args.no_story:
+            payload["no_story"] = "true"
+        result = _post_req(f"{page_id}/photos", payload, token_override=page_token)
+
+    output = {**result, "page_id": page_id, "facebook": "published"}
+
+    if not getattr(args, "no_instagram", False):
+        ig_id = _get_instagram_id(page_id, page_token)
+        if ig_id and public_url:
+            ig_result = _publish_instagram_image(ig_id, page_token, public_url, args.message or "")
+            output["instagram"] = ig_result
+        elif ig_id and not public_url:
+            output["instagram"] = "skipped — could not resolve public URL for Instagram"
+        else:
+            output["instagram"] = "skipped — no Instagram Business Account linked to this page"
+
+    _out(output)
+
+
+def _schedule_instagram_image(ig_id: str, page_token: str, image_url: str,
+                               caption: str, scheduled_ts: int) -> dict:
+    """Create a scheduled Instagram media container."""
+    container_payload = {
+        "image_url": image_url,
+        "scheduled_publish_time": str(scheduled_ts),
+        "published": "false",
+    }
+    if caption:
+        container_payload["caption"] = caption
+    container = _post_req(f"{ig_id}/media", container_payload, token_override=page_token)
+    creation_id = container.get("id")
+    if not creation_id:
+        return {"error": "Failed to create Instagram scheduled container", "details": container}
+    return {**container, "ig_user_id": ig_id, "status": "scheduled"}
 
 
 def cmd_schedule_image(args):
@@ -200,13 +319,24 @@ def cmd_schedule_image(args):
         payload["caption"] = args.message
 
     result = _post_req(f"{page_id}/photos", payload, token_override=page_token)
-    _out({
+    output = {
         **result,
         "page_id": page_id,
-        "status": "scheduled",
+        "facebook": "scheduled",
         "scheduled_for_brt": args.time,
         "scheduled_unix_utc": scheduled_ts,
-    })
+    }
+
+    if not getattr(args, "no_instagram", False):
+        ig_id = _get_instagram_id(page_id, page_token)
+        if ig_id:
+            ig_result = _schedule_instagram_image(ig_id, page_token, args.image_url,
+                                                   args.message or "", scheduled_ts)
+            output["instagram"] = ig_result
+        else:
+            output["instagram"] = "skipped — no Instagram Business Account linked to this page"
+
+    _out(output)
 
 
 def cmd_list_posts(args):
@@ -286,12 +416,16 @@ def main():
     p.add_argument("--image-url", dest="image_url", required=True)
     p.add_argument("--message", help="Caption")
     p.add_argument("--no-story", dest="no_story", action="store_true")
+    p.add_argument("--no-instagram", dest="no_instagram", action="store_true",
+                   help="Skip Instagram publishing even if account is linked")
 
     p = sub.add_parser("schedule-image", help="Schedule a photo post from a public URL")
     p.add_argument("--page", required=True)
     p.add_argument("--image-url", dest="image_url", required=True)
     p.add_argument("--message", help="Caption")
     p.add_argument("--time", required=True, metavar="YYYY-MM-DDTHH:MM:SS")
+    p.add_argument("--no-instagram", dest="no_instagram", action="store_true",
+                   help="Skip Instagram publishing even if account is linked")
 
     p = sub.add_parser("list-posts", help="List recent published posts")
     p.add_argument("--page", required=True)

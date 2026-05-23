@@ -117,5 +117,5 @@ python3 scripts/meta_pages_client.py delete-post \
 
 - Todos os horários de agendamento são em **BRT (UTC-3)**
 - Imagens para post com foto devem ser URLs públicas (HTTPS)
-- Para Instagram, usar a skill `int-instagram` (publicação via Content Publishing API — separada)
+- Posts com imagem (`post-image`, `schedule-image`) publicam automaticamente no Instagram Business Account vinculado à página, se existir. Use `--no-instagram` para pular.
 - Token expira se o System User Token for revogado — renovar via Meta Business Manager
