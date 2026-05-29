@@ -3,12 +3,13 @@ import { useToast } from './Toast'
 import Markdown from './Markdown'
 import { AgentAvatar } from './AgentAvatar'
 import { useNotifications } from '../context/NotificationContext'
+import { useSpeechRecognition } from '../hooks/useSpeechRecognition'
 import {
   Send, Square, ChevronDown, ChevronRight,
   FileCode, Terminal as TermIcon, CheckCircle2,
   Paperclip, X, File as FileIcon, ImageIcon, Upload,
   Ticket as TicketIcon, Plus, ShieldAlert, Check, Ban,
-  Pencil, Copy, FileText, Edit2,
+  Pencil, Copy, FileText, Edit2, Mic,
 } from 'lucide-react'
 
 interface SkillItem {
@@ -81,6 +82,24 @@ type Status = 'idle' | 'connecting' | 'running' | 'error'
 export default function AgentChat({ agent, sessionId, accentColor = '#00FFA7', externalLoading = false, externalError = null, onPendingCountChange, onNeedsAttention, workingDir: _workingDir, threadTicketId: _threadTicketId, onTurnCompleted }: AgentChatProps) {
   const { dismissBySession } = useNotifications()
   const toast = useToast()
+
+  const { isSupported: isSpeechSupported, isListening, start: startListening, stop: stopListening } = useSpeechRecognition({
+    onFinalResult: (text) => {
+      setInput((prev) => (prev ? prev + ' ' + text : text))
+      // Focar e ajustar altura da textarea após transcrição
+      requestAnimationFrame(() => {
+        const el = inputRef.current
+        if (!el) return
+        el.focus()
+        el.style.height = 'auto'
+        el.style.height = Math.min(el.scrollHeight, 128) + 'px'
+      })
+    },
+    onPermissionDenied: () => {
+      toast.error('Permissão de microfone negada', 'Habilite o microfone nas configurações do navegador para usar voz.')
+    },
+  })
+
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
   const [status, setStatus] = useState<Status>('idle')
@@ -900,6 +919,7 @@ export default function AgentChat({ agent, sessionId, accentColor = '#00FFA7', e
   const isConnecting = externalLoading || status === 'connecting'
   const effectiveError = externalError || (status === 'error' ? errorMsg : null)
   const inputDisabled = isConnecting || !!effectiveError
+  const micDisabled = inputDisabled || status === 'running'
   const canSend = (input.trim().length > 0 || attachedFiles.length > 0) && !inputDisabled && status !== 'running'
 
   return (
@@ -1326,13 +1346,29 @@ export default function AgentChat({ agent, sessionId, accentColor = '#00FFA7', e
               ref={fileInputRef}
               type="file"
               multiple
-              accept="image/*"
+              accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.json,.md"
               className="hidden"
               onChange={(e) => {
                 if (e.target.files) processFiles(e.target.files)
                 e.target.value = ''
               }}
             />
+
+            {/* Mic button */}
+            {isSpeechSupported && (
+              <button
+                onClick={() => (isListening ? stopListening() : startListening())}
+                disabled={micDisabled}
+                className="flex-shrink-0 flex items-center justify-center w-7 h-7 rounded-lg text-[#667085] hover:text-[#e6edf3] hover:bg-[#21262d] transition-colors mb-0.5"
+                style={isListening ? {
+                  color: accentColor,
+                  animation: 'chat-pulse 1s ease-in-out infinite',
+                } : undefined}
+                title={isListening ? 'Parar gravação' : 'Gravar voz'}
+              >
+                <Mic size={14} />
+              </button>
+            )}
 
             {/* Textarea */}
             <textarea
