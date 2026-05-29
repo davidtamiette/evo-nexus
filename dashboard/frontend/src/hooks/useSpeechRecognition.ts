@@ -123,10 +123,10 @@ export function useSpeechRecognition({
     if (!recognitionRef.current || !isListening) return
     try {
       recognitionRef.current.stop()
+      // NÃO setar isListening aqui — onend cuida disso
     } catch (e) {
       console.warn('[useSpeechRecognition] stop error:', e)
     }
-    setIsListening(false)
   }, [isListening])
 
   return { isSupported, isListening, start, stop }

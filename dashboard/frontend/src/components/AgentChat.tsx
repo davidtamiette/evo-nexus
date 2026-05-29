@@ -922,6 +922,13 @@ export default function AgentChat({ agent, sessionId, accentColor = '#00FFA7', e
   const micDisabled = inputDisabled || status === 'running'
   const canSend = (input.trim().length > 0 || attachedFiles.length > 0) && !inputDisabled && status !== 'running'
 
+  // R7 — Parar gravação quando o input ficar desabilitado (agente em erro/reconectando)
+  useEffect(() => {
+    if (inputDisabled && isListening) {
+      stopListening()
+    }
+  }, [inputDisabled, isListening, stopListening])
+
   return (
     <div
       className="flex flex-col h-full bg-[#0C111D] relative"
