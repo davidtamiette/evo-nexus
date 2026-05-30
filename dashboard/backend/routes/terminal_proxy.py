@@ -156,9 +156,11 @@ def register_websocket_proxy(sock) -> None:
         target = f"{TERMINAL_WS_BASE}/ws"
         try:
             upstream = create_connection(target, timeout=10)
-            # Remove the socket timeout after connection so idle recv() calls
-            # don't expire — the terminal-server is often silent between messages.
-            upstream.sock.settimeout(None)
+            # timeout=10 serves only the connection handshake. After connect,
+            # recv() must block indefinitely — a 10s idle gap causes
+            # WebSocketTimeoutException, silently closing the client connection
+            # and making the browser reconnect every ~10s.
+            upstream.settimeout(None)
         except Exception as exc:
             log.warning("terminal_proxy: upstream WS connect failed: %s", exc)
             try:
