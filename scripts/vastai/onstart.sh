@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # onstart.sh — ComfyUI + Cloudflare Tunnel + Watchdog
 # Executado automaticamente pelo vast.ai ao iniciar a instância.
+# Imagem alvo: pytorch/pytorch:2.7.0-cuda12.8-cudnn9-runtime (CUDA 12.8, sm_120 Blackwell)
 # Requer no ambiente: CLOUDFLARE_TUNNEL_TOKEN, COMFY_WORKSPACE
 # Variáveis com default seguro:
 set -euo pipefail
@@ -32,8 +33,10 @@ fi
 
 # ── 4. Instalar dependências Python do ComfyUI ────────────────────────────────
 cd "$COMFY_DIR"
+# Imagem pytorch:2.7.0-cuda12.8 já inclui torch — não reinstalar pra não quebrar ABI
 if ! python3 -c "import torch" 2>/dev/null; then
-    pip install --quiet torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+    echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] AVISO: torch não encontrado — instalando (imagem inesperada)"
+    pip install --quiet torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
 fi
 pip install --quiet -r requirements.txt
 
@@ -81,21 +84,36 @@ install_node() {
 }
 
 install_node "https://github.com/ltdrdata/ComfyUI-Manager.git"
-install_node "https://github.com/ltdrdata/ComfyUI-Impact-Pack.git"
 install_node "https://github.com/crystian/ComfyUI-Crystools.git"
+install_node "https://github.com/Fannovel16/comfyui_controlnet_aux.git"
+# Impact-Pack removido: puxava torch>=2.5.1 quebrando ABI com torchaudio pré-compilado
+
+# ── 6b. Verificação de integridade do torch pós-install ──────────────────────
+echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Verificando integridade do torch..."
+TORCH_VERSION=$(python3 -c "import torch; print(torch.__version__)" 2>&1)
+if python3 -c "import torch, torchaudio" 2>/dev/null; then
+    echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] torch OK: $TORCH_VERSION — torchaudio importou sem erro"
+else
+    echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] ERRO: torch/torchaudio falhou na importação (versão: $TORCH_VERSION)"
+    python3 -c "import torch, torchaudio" 2>&1 || true
+    echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] ABORT: ambiente Python incompatível — verifique imagem/custom nodes"
+    exit 1
+fi
 
 # ── 7. Iniciar ComfyUI em modo API ────────────────────────────────────────────
 COMFY_PORT="${COMFY_PORT:-8188}"
 COMFY_LOG="$WORKSPACE/logs/comfyui.log"
+COMFY_ERR="$WORKSPACE/logs/comfyui.err"
 
 echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Iniciando ComfyUI na porta $COMFY_PORT..."
+# stdout → comfyui.log | stderr → comfyui.err (separado para debug de crashes)
 nohup python3 "$COMFY_DIR/main.py" \
     --listen 0.0.0.0 \
     --port "$COMFY_PORT" \
     --output-directory "$WORKSPACE/outputs" \
     --disable-auto-launch \
     --preview-method auto \
-    > "$COMFY_LOG" 2>&1 &
+    > "$COMFY_LOG" 2>"$COMFY_ERR" &
 
 COMFY_PID=$!
 echo "$COMFY_PID" > /workspace/logs/comfyui.pid
@@ -111,7 +129,10 @@ for i in $(seq 1 24); do
     sleep 5
     if [ $i -eq 24 ]; then
         echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] ERRO: ComfyUI não respondeu em 120s"
+        echo "=== comfyui.log (últimas 50 linhas) ==="
         tail -50 "$COMFY_LOG"
+        echo "=== comfyui.err (últimas 50 linhas) ==="
+        tail -50 "$COMFY_ERR" 2>/dev/null || echo "(vazio)"
         exit 1
     fi
 done

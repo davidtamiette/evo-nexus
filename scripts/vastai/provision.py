@@ -27,8 +27,9 @@ from pathlib import Path
 ENV_FILE = Path("/Users/david/evonexus/.env")
 ONSTART_SCRIPT = Path("/Users/david/evonexus/scripts/vastai/onstart.sh")
 
-# Imagem base: PyTorch 2.4 + CUDA 12.4 (compatível com Flux.2)
-IMAGE = "pytorch/pytorch:2.4.1-cuda12.4-cudnn9-runtime"
+# Imagem base: PyTorch 2.7 + CUDA 12.8 (suporta sm_120 Blackwell / RTX 5090)
+# Evita conflito de ABI com custom nodes que puxam torch>=2.5.1
+IMAGE = "pytorch/pytorch:2.7.0-cuda12.8-cudnn9-runtime"
 
 # Porta ComfyUI exposta
 COMFY_PORT = 8188
