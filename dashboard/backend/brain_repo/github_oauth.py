@@ -102,7 +102,8 @@ class OAuthAuthProvider(GitHubAuthProvider):
             method="POST",
         )
         try:
-            with urllib.request.urlopen(req, timeout=15) as resp:
+            from brain_repo.github_api import _SSL_CTX
+            with urllib.request.urlopen(req, timeout=15, context=_SSL_CTX) as resp:
                 data = _json.loads(resp.read())
         except Exception as exc:
             raise RuntimeError(f"GitHub OAuth callback failed: {exc}") from exc

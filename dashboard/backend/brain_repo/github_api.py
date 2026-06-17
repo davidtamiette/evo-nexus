@@ -1,6 +1,7 @@
 """Brain Repo — GitHub REST API integration."""
 
 import logging
+import ssl
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -10,6 +11,25 @@ log = logging.getLogger(__name__)
 
 _API_BASE = "https://api.github.com"
 _TIMEOUT = 15
+
+
+def _build_ssl_context() -> ssl.SSLContext:
+    """SSL context backed by certifi's CA bundle.
+
+    Some Python installs (notably python.org builds on macOS and slim Docker
+    images) ship without access to a system CA bundle, so urllib's default
+    verification fails with CERTIFICATE_VERIFY_FAILED — which previously
+    surfaced as a bogus "invalid PAT" error. Prefer certifi; fall back to the
+    stdlib default if certifi isn't installed.
+    """
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:  # certifi missing or unreadable — use stdlib default
+        return ssl.create_default_context()
+
+
+_SSL_CTX = _build_ssl_context()
 
 _SNAPSHOT_PREFIXES = {
     "daily": "refs/tags/snapshot/",
@@ -30,7 +50,7 @@ def _get(url: str, token: str) -> tuple[int, dict | list | None, dict]:
     """Perform a GET request. Returns (status_code, body, response_headers)."""
     req = urllib.request.Request(url, headers=_headers(token), method="GET")
     try:
-        with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:
+        with urllib.request.urlopen(req, timeout=_TIMEOUT, context=_SSL_CTX) as resp:
             body = _loads(resp.read())
             return resp.status, body, dict(resp.headers)
     except urllib.error.HTTPError as exc:
@@ -54,7 +74,7 @@ def _post(url: str, token: str, payload: dict) -> tuple[int, dict | None]:
         method="POST",
     )
     try:
-        with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:
+        with urllib.request.urlopen(req, timeout=_TIMEOUT, context=_SSL_CTX) as resp:
             return resp.status, _loads(resp.read())
     except urllib.error.HTTPError as exc:
         try:

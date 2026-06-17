@@ -23,7 +23,11 @@ export default function StepBrainChoose({ token, onNext, onBack }: StepBrainChoo
   const { t } = useTranslation()
   const { user } = useAuth()
   const [mode, setMode] = useState<'create' | 'existing'>('create')
-  const [repoName, setRepoName] = useState(`evo-brain-${user?.username || 'workspace'}`)
+  // GitHub repo names can't contain spaces or most punctuation — slugify the
+  // display name so "David Tamiette" → "david-tamiette" instead of producing an
+  // invalid name that GitHub silently rewrites (which then mismatches detection).
+  const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '')
+  const [repoName, setRepoName] = useState(`evo-brain-${slug(user?.username || 'workspace')}`)
   const [repos, setRepos] = useState<Repo[]>([])
   const [selectedRepo, setSelectedRepo] = useState<Repo | null>(null)
   const [loadingRepos, setLoadingRepos] = useState(false)
@@ -33,12 +37,15 @@ export default function StepBrainChoose({ token, onNext, onBack }: StepBrainChoo
   useEffect(() => {
     if (mode === 'existing') {
       setLoadingRepos(true)
-      api.get('/brain-repo/detect')
+      // Pass the token explicitly: during onboarding there is no stored brain-repo
+      // config yet, so the backend cannot fall back to a decrypted token and would
+      // return 400 — which previously surfaced as "no compatible repos found".
+      api.get(`/brain-repo/detect?token=${encodeURIComponent(token)}`)
         .then((data: { repos: Repo[] }) => setRepos(data.repos || []))
         .catch(() => setRepos([]))
         .finally(() => setLoadingRepos(false))
     }
-  }, [mode])
+  }, [mode, token])
 
   const handleSave = async () => {
     setError('')
