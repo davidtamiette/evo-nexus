@@ -28,6 +28,11 @@ import os
 import threading
 
 import requests
+
+try:
+    from simple_websocket import ConnectionClosed as _WSConnectionClosed
+except ImportError:  # pragma: no cover — falls back to catching all exceptions
+    _WSConnectionClosed = None  # type: ignore[assignment,misc]
 from flask import Blueprint, Response, request, stream_with_context
 from flask_login import current_user, login_required
 
@@ -67,6 +72,24 @@ def _forward_headers(src: dict[str, str]) -> dict[str, str]:
 # ---------------------------------------------------------------------------
 # HTTP proxy — covers /api/health, /api/sessions/*, /api/notifications/*, etc.
 # ---------------------------------------------------------------------------
+
+@bp.route("/terminal/ping", methods=["GET"])
+def terminal_ping():
+    """Public health probe — no auth required.
+
+    Lets the frontend distinguish 'terminal-server not running' from
+    'not authenticated', so it can show the right error or redirect to login.
+    """
+    try:
+        r = requests.get(f"{TERMINAL_HTTP_BASE}/api/health", timeout=5)
+        if r.ok:
+            return {"ok": True}, 200
+        return {"ok": False, "error": f"terminal-server returned {r.status_code}"}, 503
+    except requests.exceptions.ConnectionError:
+        return {"ok": False, "error": "not running"}, 503
+    except requests.exceptions.Timeout:
+        return {"ok": False, "error": "timeout"}, 504
+
 
 @bp.route(
     "/terminal/<path:subpath>",
@@ -187,11 +210,17 @@ def register_websocket_proxy(sock) -> None:
         t = threading.Thread(target=_pump_upstream_to_client, daemon=True)
         t.start()
 
+        _closed_exc = _WSConnectionClosed if _WSConnectionClosed is not None else ()
         try:
             while not stop.is_set():
-                msg = client_ws.receive(timeout=30)
-                if msg is None:
+                try:
+                    msg = client_ws.receive(timeout=30)
+                except _closed_exc:  # type: ignore[misc]
                     break
+                if msg is None:
+                    # receive() returned None — timeout expired, peer is idle.
+                    # Keep the loop alive; do NOT break.
+                    continue
                 upstream.send(msg)
         except Exception:
             pass
@@ -201,8 +230,18 @@ def register_websocket_proxy(sock) -> None:
                 upstream.close()
             except Exception:
                 pass
-            # Close the raw socket so Werkzeug cannot write HTTP response bytes
-            # to the already-WebSocket'd connection (would corrupt frames).
+            # Send a WS close frame (1000 Normal Closure) so the browser
+            # receives ws.onclose instead of ws.onerror (TCP RST).
+            # Without this the browser sees an abrupt TCP close and fires
+            # ws.onerror → "WebSocket error" in the UI, even for benign
+            # disconnects (e.g. the PTY process exiting cleanly after
+            # `claude auth login` succeeds).
+            try:
+                client_ws.close()
+            except Exception:
+                pass
+            # Also close the raw socket so Werkzeug cannot write HTTP
+            # response bytes to the already-WebSocket'd connection.
             try:
                 client_ws.sock.close()
             except Exception:

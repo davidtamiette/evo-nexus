@@ -80,6 +80,9 @@ export default function AgentTerminal({ agent, sessionId: externalSessionId, wor
   const wsRef = useRef<WebSocket | null>(null)
   const sessionIdRef = useRef<string | null>(null)
   const pingRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  // Tracks whether the PTY process exited intentionally so ws.onclose does
+  // not trigger an unwanted reconnect after a clean exit.
+  const processExitedRef = useRef<boolean>(false)
   const [status, setStatus] = useState<Status>('connecting')
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
 
@@ -106,6 +109,16 @@ export default function AgentTerminal({ agent, sessionId: externalSessionId, wor
       },
       scrollback: 5000,
       allowProposedApi: true,
+      // Handle OSC 8 hyperlinks (e.g. Claude CLI OAuth URL) by opening them
+      // directly via window.open instead of the default confirm() dialog.
+      // Without this, the OAuth URL printed by `claude auth login` triggers a
+      // browser confirm prompt instead of silently opening a new tab.
+      linkHandler: {
+        activate: (_event: MouseEvent, uri: string) => {
+          const w = window.open()
+          if (w) { w.opener = null; w.location.href = uri }
+        },
+      },
     })
     const fit = new FitAddon()
     term.loadAddon(fit)
@@ -187,6 +200,7 @@ export default function AgentTerminal({ agent, sessionId: externalSessionId, wor
     async function run() {
       setStatus('connecting')
       setErrorMsg(null)
+      processExitedRef.current = false
       term!.clear()
 
       // 1) Use provided sessionId or find-or-create for this agent
@@ -290,6 +304,7 @@ export default function AgentTerminal({ agent, sessionId: externalSessionId, wor
             }
             break
           case 'exit':
+            processExitedRef.current = true
             setStatus('exited')
             term!.write(`\r\n\x1b[33m[Process exited${msg.code != null ? ` with code ${msg.code}` : ''}]\x1b[0m\r\n`)
             break
@@ -304,15 +319,32 @@ export default function AgentTerminal({ agent, sessionId: externalSessionId, wor
       }
 
       ws.onerror = () => {
-        if (cancelled) return
-        setStatus('error')
-        setErrorMsg('WebSocket error')
+        // Do not show an error immediately — the onclose handler fires right
+        // after onerror and will decide whether to reconnect or show an error.
+        // Swallowing here prevents a flash of "WebSocket error" that resolves
+        // itself on the next reconnect attempt.
       }
 
       ws.onclose = () => {
         if (pingRef.current) {
           clearInterval(pingRef.current)
           pingRef.current = null
+        }
+        // If the session is still running on the server (PTY alive) and the
+        // WS dropped unexpectedly, reconnect automatically after a short
+        // delay. This covers:
+        //   - Network blip / Cloudflare idle timeout during a long OAuth flow
+        //   - Proxy closing the socket after the PTY exits (the reconnect
+        //     will see the session is no longer active and stop gracefully)
+        // Skip reconnect if: the component is unmounting (cancelled=true),
+        // the user explicitly exited (status='exited'), or there is no known
+        // session to reconnect to.
+        if (!cancelled && sessionIdRef.current && !processExitedRef.current) {
+          setTimeout(() => {
+            if (!cancelled) {
+              run()
+            }
+          }, 2000)
         }
       }
 
